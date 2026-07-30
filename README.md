@@ -42,22 +42,20 @@ The paths are relative to the project root, so moving the project also moves its
 
 ## Back up and restore
 
-For the simplest consistent backup:
+Open **Settings → Backup & local data** and choose **Download complete backup**. Manuix downloads one dated `.tar.gz` archive containing:
 
-1. Stop Manuix with `Ctrl+C`.
-2. Copy the complete data folder:
+- a consistent live snapshot of `manuix.sqlite`;
+- the complete `uploads/` folder with original photos;
+- `RESTORE.txt` with safe manual restore steps.
+
+The file goes to the browser's configured Downloads folder. Export does not change the live database or photo files.
+
+To restore, stop Manuix, first preserve a separate copy of the current `data/` folder, extract the archive, then place its `manuix.sqlite` and `uploads/` into `data/`. Do not restore stale `manuix.sqlite-wal` or `manuix.sqlite-shm` files. Automatic restore is intentionally not exposed in the app.
+
+You can also make a cold filesystem backup while Manuix is stopped:
 
 ```bash
 cp -R data "$HOME/Desktop/manuix-backup-$(date +%Y-%m-%d)"
-```
-
-To restore, stop Manuix and replace the project’s `data/` folder with the backed-up folder. Keep the database and `uploads/` together so photo paths remain valid.
-
-If you need to back up while Manuix is running, use SQLite’s backup command for the database and separately copy `data/uploads/`:
-
-```bash
-sqlite3 data/manuix.sqlite ".backup '$HOME/Desktop/manuix.sqlite'"
-cp -R data/uploads "$HOME/Desktop/manuix-uploads"
 ```
 
 ## Everyday commands

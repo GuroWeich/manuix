@@ -351,6 +351,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .setting-row strong { font-size: 9px; }
 .setting-row small { margin-top: 3px; color: var(--muted); font-size: 8px; }
 .setting-row em { padding: 4px 7px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); font-size: 7px; font-style: normal; font-weight: 800; }
+.backup-button { width: fit-content; height: 36px; display: inline-flex; align-items: center; gap: 7px; padding: 0 12px; margin-top: 14px; border-radius: 9px; background: var(--accent); color: white; font-size: 9px; font-weight: 750; text-decoration: none; }
+.backup-button:hover { filter: brightness(.95); }
+.settings-card > .backup-note { margin: 10px 0 0; line-height: 1.6; }
+.settings-card code { padding: 1px 4px; border-radius: 4px; background: var(--surface-2); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; }
 .danger-link { margin-top: 16px; padding: 0; border: 0; background: transparent; color: #a05246; font-size: 9px; font-weight: 700; cursor: pointer; }
 .shortcuts > div { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-top: 1px solid var(--line); color: var(--muted); font-size: 9px; }
 .shortcuts > div:first-of-type { margin-top: 12px; }

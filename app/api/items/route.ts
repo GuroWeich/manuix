@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 const itemSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
-  category: z.string(),
+  category: z.string().trim().min(1),
   location: z.string().min(1),
   collections: z.array(z.string()),
   tags: z.array(z.string()),

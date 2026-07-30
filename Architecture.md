@@ -29,6 +29,7 @@ The browser retains only temporary interaction state such as the active view, op
 - `app/api/items/[id]/route.ts`: delete an item
 - `app/api/items/reset/route.ts`: explicitly restore sample data
 - `app/api/catalog/route.ts`: locations, collections, counts, and Inbox
+- `app/api/backup/route.ts`: stream a complete, consistent local backup archive
 - `app/api/uploads/route.ts`: validate and persist uploads
 - `app/api/uploads/[filename]/route.ts`: serve a local original safely
 
@@ -58,6 +59,7 @@ Routes use the Node.js runtime so native SQLite and filesystem access remain ava
 ## Reliability choices
 
 - One SQLite database file and one uploads folder make backup understandable.
+- Settings export uses SQLite's live backup API and packages that snapshot with all uploaded originals and restore instructions.
 - WAL mode protects normal local writes and improves read/write behavior.
 - Foreign keys and cascading deletes prevent orphaned relationships.
 - A 5-second busy timeout handles brief local lock contention.

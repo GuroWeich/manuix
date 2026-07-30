@@ -11,6 +11,7 @@ import {
   Clock3,
   Command,
   Copy,
+  Download,
   Grid2X2,
   ImageOff,
   Inbox,
@@ -33,7 +34,7 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 import { filterItems, formatCurrency, inventoryMetrics } from "./inventory";
 import { inventoryRepository } from "./repository";
@@ -72,7 +73,7 @@ type ItemFormValues = z.infer<typeof itemSchema>;
 
 const EMPTY_FORM: ItemFormValues = {
   name: "",
-  category: "Electronics",
+  category: "",
   location: "",
   collectionsText: "",
   tagsText: "",
@@ -85,6 +86,8 @@ const EMPTY_FORM: ItemFormValues = {
   serialNumber: "",
   condition: "Good",
 };
+
+const DEFAULT_CATEGORIES = ["Electronics", "Cameras", "Outdoor", "Tools", "Kitchen", "Other"];
 
 function itemToForm(item: InventoryItem): ItemFormValues {
   return {
@@ -184,7 +187,10 @@ export function ManuixApp() {
   }, [toast]);
 
   const metrics = useMemo(() => inventoryMetrics(items), [items]);
-  const categories = useMemo(() => ["All", ...new Set(items.map((item) => item.category))], [items]);
+  const categories = useMemo(
+    () => ["All", ...new Set([...DEFAULT_CATEGORIES, ...items.map((item) => item.category).filter(Boolean)])],
+    [items],
+  );
   const filtered = useMemo(() => filterItems(items, query, category), [items, query, category]);
 
   async function saveItem(draft: ItemDraft, existing?: InventoryItem) {
@@ -340,6 +346,8 @@ export function ManuixApp() {
       {editing && (
         <ItemModal
           item={editing === "new" ? undefined : editing}
+          categories={categories.slice(1)}
+          locations={catalog.locations}
           onClose={() => setEditing(null)}
           onSave={(draft) => void saveItem(draft, editing === "new" ? undefined : editing)}
         />
@@ -520,7 +528,14 @@ function SettingsView({ theme, setTheme, onReset }: { theme: "light" | "dark"; s
     <div className="page settings-page">
       <PageHeading eyebrow="Your workspace" title="Settings" copy="Keep Manuix comfortable, private, and yours." />
       <section className="settings-card"><h2>Appearance</h2><p>Choose how Manuix looks on this device.</p><div className="theme-choice"><button className={theme === "light" ? "active" : ""} onClick={() => setTheme("light")}><span className="theme-preview light-preview"><i /><i /><i /></span><span><Sun size={16} /> Light</span>{theme === "light" && <Check size={16} />}</button><button className={theme === "dark" ? "active" : ""} onClick={() => setTheme("dark")}><span className="theme-preview dark-preview"><i /><i /><i /></span><span><Moon size={16} /> Dark</span>{theme === "dark" && <Check size={16} />}</button></div></section>
-      <section className="settings-card"><h2>Local data</h2><p>Your SQLite database and original image files stay in this project&apos;s data folder on your Mac.</p><div className="setting-row"><span className="metric-icon green"><Archive size={18} /></span><span><strong>Project-local storage</strong><small>No account, cloud database, or network connection required</small></span><em>Healthy</em></div><button className="danger-link" onClick={onReset}>Restore sample inventory</button></section>
+      <section className="settings-card">
+        <h2>Backup &amp; local data</h2>
+        <p>Download one restorable archive containing a consistent copy of the SQLite database, every uploaded original in <code>uploads/</code>, and safe manual restore instructions.</p>
+        <div className="setting-row"><span className="metric-icon green"><Archive size={18} /></span><span><strong>Project-local storage</strong><small>No account, cloud database, or network connection required</small></span><em>Healthy</em></div>
+        <a className="backup-button" href="/api/backup"><Download size={16} /> Download complete backup</a>
+        <p className="backup-note">Your browser saves the <code>.tar.gz</code> file in its normal Downloads folder. Export does not change or remove any inventory or photos. To restore, stop Manuix and follow the included <code>RESTORE.txt</code>; there is intentionally no automatic restore button.</p>
+        <button className="danger-link" onClick={onReset}>Restore sample inventory</button>
+      </section>
       <section className="settings-card shortcuts"><h2>Keyboard shortcuts</h2><div><span>Search anywhere</span><kbd>⌘ K</kbd></div><div><span>Add a new item</span><kbd>⌘ N</kbd></div><div><span>Close a panel</span><kbd>Esc</kbd></div></section>
     </div>
   );
@@ -552,8 +567,9 @@ function InfoGroup({ title, children }: { title: string; children: React.ReactNo
   return <section className="info-group"><h3>{title}</h3>{children}</section>;
 }
 
-function ItemModal({ item, onClose, onSave }: { item?: InventoryItem; onClose: () => void; onSave: (draft: ItemDraft) => void }) {
-  const { register, handleSubmit, formState: { errors, isSubmitting }, setValue, watch } = useForm<ItemFormValues>({ resolver: zodResolver(itemSchema), defaultValues: item ? itemToForm(item) : EMPTY_FORM });
+function ItemModal({ item, categories, locations, onClose, onSave }: { item?: InventoryItem; categories: string[]; locations: LocationSummary[]; onClose: () => void; onSave: (draft: ItemDraft) => void }) {
+  const { control, register, handleSubmit, formState: { errors, isSubmitting }, trigger } = useForm<ItemFormValues>({ resolver: zodResolver(itemSchema), defaultValues: item ? itemToForm(item) : EMPTY_FORM });
+  const itemName = useWatch({ control, name: "name" });
   const [photo, setPhoto] = useState<string | null>(item?.photo ?? null);
   const [photoUploading, setPhotoUploading] = useState(false);
   const [photoError, setPhotoError] = useState("");
@@ -564,8 +580,8 @@ function ItemModal({ item, onClose, onSave }: { item?: InventoryItem; onClose: (
     const parseNumber = (value: string) => value.trim() ? Number(value) : null;
     onSave({
       name: values.name,
-      category: values.category,
-      location: values.location,
+      category: values.category.trim(),
+      location: values.location.trim(),
       collections: splitList(values.collectionsText),
       tags: splitList(values.tagsText),
       notes: values.notes,
@@ -610,9 +626,9 @@ function ItemModal({ item, onClose, onSave }: { item?: InventoryItem; onClose: (
               </label>
               <div className="field-grid">
                 <Field label="Item name" error={errors.name?.message} wide><input autoFocus placeholder="e.g. Film camera" {...register("name")} /></Field>
-                <Field label="Category" error={errors.category?.message}><select {...register("category")}><option>Electronics</option><option>Cameras</option><option>Outdoor</option><option>Tools</option><option>Kitchen</option><option>Other</option></select></Field>
+                <Field label="Category" error={errors.category?.message} hint="Choose a suggestion or type a new category"><input list="manuix-category-options" placeholder="Choose or type a category" {...register("category")} /><datalist id="manuix-category-options">{categories.map((entry) => <option value={entry} key={entry} />)}</datalist></Field>
                 <Field label="Condition"><select {...register("condition")}><option>New</option><option>Excellent</option><option>Good</option><option>Fair</option><option>Poor</option></select></Field>
-                <Field label="Permanent location" error={errors.location?.message} wide><div className="input-icon"><MapPin size={16} /><input placeholder="Home / Room / Shelf" {...register("location")} /></div></Field>
+                <Field label="Permanent location" error={errors.location?.message} wide hint="Choose an existing full path or type a new one"><div className="input-icon"><MapPin size={16} /><input list="manuix-location-options" placeholder="Home / Room / Shelf" {...register("location")} /><datalist id="manuix-location-options">{locations.map((entry) => <option value={entry.path} key={entry.path}>{entry.path}</option>)}</datalist></div></Field>
                 <Field label="Collections" wide hint="Separate several with commas"><input placeholder="Photography, Travel" {...register("collectionsText")} /></Field>
                 <Field label="Tags" wide hint="Separate several with commas"><input placeholder="vintage, favorite" {...register("tagsText")} /></Field>
               </div>
@@ -630,10 +646,10 @@ function ItemModal({ item, onClose, onSave }: { item?: InventoryItem; onClose: (
           )}
         </div>
         <div className="modal-footer">
-          <span>{watch("name") ? `Adding “${watch("name")}”` : "Required fields are marked"}</span>
+          <span>{itemName ? `Adding “${itemName}”` : "Required fields are marked"}</span>
           <div>
             {formSection === "details" && <button type="button" className="secondary-button" onClick={() => setFormSection("essential")}>Back</button>}
-            {formSection === "essential" ? <button type="button" className="primary-button" onClick={() => { setValue("name", watch("name"), { shouldValidate: true }); setFormSection("details"); }}>Continue <ChevronRight size={17} /></button>
+            {formSection === "essential" ? <button type="button" className="primary-button" onClick={async () => { if (await trigger(["name", "category", "location"])) setFormSection("details"); }}>Continue <ChevronRight size={17} /></button>
               : <button className="primary-button" disabled={isSubmitting || photoUploading}>{photoUploading ? "Saving photo…" : item ? "Save changes" : "Add to inventory"}</button>}
           </div>
         </div>

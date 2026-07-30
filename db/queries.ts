@@ -54,22 +54,28 @@ export async function listItems(): Promise<InventoryItem[]> {
 export async function saveItem(item: InventoryItem) {
   const db = getDatabase();
   db.transaction((tx) => {
-    const locationId = `location-${slug(item.location) || "unspecified"}`;
-    const locationName = item.location.split(" / ").at(-1) || item.location;
-    tx.insert(locations).values({
+    const locationPath = item.location.trim();
+    const existingLocation = tx
+      .select({ id: locations.id })
+      .from(locations)
+      .where(eq(locations.path, locationPath))
+      .get();
+    const locationId = existingLocation?.id ?? `location-${slug(locationPath) || "unspecified"}-${crypto.randomUUID().slice(0, 8)}`;
+    const locationName = locationPath.split(" / ").at(-1) || locationPath;
+    if (!existingLocation) tx.insert(locations).values({
       id: locationId,
       name: locationName,
-      path: item.location,
+      path: locationPath,
       color: "sage",
       createdAt: item.createdAt,
-    }).onConflictDoNothing().run();
+    }).run();
 
     tx.insert(inventoryItems).values({
       id: item.id,
       name: item.name,
-      category: item.category,
+      category: item.category.trim(),
       locationId,
-      locationPath: item.location,
+      locationPath,
       notes: item.notes,
       purchaseDate: item.purchaseDate,
       purchasePrice: item.purchasePrice,
@@ -85,9 +91,9 @@ export async function saveItem(item: InventoryItem) {
       target: inventoryItems.id,
       set: {
         name: item.name,
-        category: item.category,
+        category: item.category.trim(),
         locationId,
-        locationPath: item.location,
+        locationPath,
         notes: item.notes,
         purchaseDate: item.purchaseDate,
         purchasePrice: item.purchasePrice,

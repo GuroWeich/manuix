@@ -84,4 +84,6 @@ It does not erase or replace existing personal inventory.
 
 ## Backup integrity
 
-Stop the server and copy the complete `data/` directory for the simplest backup. This keeps the database and photo originals together. If the server must stay running, use SQLite’s `.backup` command rather than copying only the live `.sqlite` file.
+Use **Settings → Backup & local data → Download complete backup** for a consistent backup while Manuix is running. It uses SQLite's live backup API and packages the snapshot, the complete `uploads/` folder, and manual restore instructions in one `.tar.gz` download.
+
+To restore, stop Manuix and follow the archive's `RESTORE.txt`. Preserve the current `data/` folder separately before replacing its database and uploads. The app does not expose automatic restore because replacing live storage while the server is running is unsafe.
