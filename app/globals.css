@@ -292,6 +292,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .inbox-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
 .inbox-card { overflow: hidden; border: 1px solid var(--line); border-radius: 15px; background: var(--surface); }
 .inbox-image { height: 190px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: rgba(255,255,255,.82); }
+.inbox-image img { width: 100%; height: 100%; object-fit: cover; }
 .inbox-image span { font-size: 8px; }
 .inbox-0 { background: linear-gradient(145deg, #789181, #394b40); }
 .inbox-1 { background: linear-gradient(145deg, #a4876f, #4f4138); }

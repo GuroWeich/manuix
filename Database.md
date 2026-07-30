@@ -1,102 +1,87 @@
 # Manuix Database
 
-## Storage model
+## Location
 
-The MVP uses SQLite through the official SQLite WebAssembly package. The database lives in browser-managed local storage and works without a backend.
-
-The repository creates this table:
-
-```sql
-CREATE TABLE inventory_items (
-  id TEXT PRIMARY KEY,
-  payload TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-```
-
-`payload` contains the versioned JSON representation of an inventory item. Identity and timestamps remain separate so migrations and ordering do not require parsing every record.
-
-## Item payload
-
-Each item supports:
-
-- identity and timestamps
-- name, category, condition, and notes
-- permanent hierarchical location
-- zero or more collections and tags
-- manufacturer, model, and serial number
-- purchase date and price
-- estimated value
-- local photo reference/data
-
-Collections are never used to infer or overwrite permanent location.
-
-## Why JSON payloads for the MVP
-
-The first release needs product-learning speed more than complex cross-item queries. A JSON payload:
-
-- keeps migrations small while the domain is still changing;
-- supports complete record replacement in one transaction;
-- keeps the repository adapter simple;
-- makes export straightforward.
-
-Search and reports currently run over the in-memory domain set, which is appropriate for a personal inventory of hundreds or low thousands of records.
-
-## Normalization plan
-
-Normalize when real scale or reporting needs justify it:
+The SQLite database is stored at:
 
 ```text
-items
-photos
-locations
-collections
-item_collections
-tags
-item_tags
-purchase_records
+data/manuix.sqlite
 ```
 
-Likely first indexes:
-
-- `items(name)`
-- `items(category_id)`
-- `items(location_id)`
-- `items(created_at)`
-- `photos(item_id)`
-- join-table composite primary keys
-
-SQLite FTS5 can replace in-memory text search while preserving the repository contract.
-
-## Photos
-
-The current browser MVP attaches original image data locally to the record. The next storage adapter should write originals to a user-selected on-disk folder and store only a stable relative path plus generated thumbnail metadata in SQLite.
-
-Recommended layout:
+Original uploaded photos are stored at:
 
 ```text
-Manuix/
-  manuix.sqlite
-  photos/
-    originals/
-    thumbnails/
-  backups/
+data/uploads/
 ```
 
-Writes should copy the original first, verify it, commit the database record second, and remove temporary data last. This avoids dangling records or lost originals.
+Both are ignored by Git.
 
-## Migrations and backups
+## Tables
 
-Before adding normalized tables:
+### `inventory_items`
 
-1. introduce a `schema_migrations` table;
-2. ship forward-only, transactional migrations;
-3. export a backup before destructive migrations;
-4. test upgrade paths from every supported release.
+Stores identity, name, category, permanent location reference and path, notes, purchase date and price, estimated value, manufacturer, model, serial number, condition, visual treatment, and timestamps.
 
-The next release should provide a portable archive containing the SQLite database, original photos, and a manifest with schema and application versions.
+### `locations`
 
-## Fallback behavior
+Stores named hierarchical paths, an optional parent reference, and display color. `path` is unique.
 
-If SQLite cannot initialize in a browser, Manuix uses a JSON local-storage adapter with the same repository methods. This favors product availability. The settings screen should expose the active adapter before a public release, and exports should work from either adapter.
+### `collections`
+
+Stores collection name, icon, color, and creation timestamp. Collection membership never changes permanent location.
+
+### `item_collections`
+
+Many-to-many item and collection membership.
+
+### `tags`
+
+Stores unique tag names.
+
+### `item_tags`
+
+Many-to-many item and tag membership.
+
+### `photos`
+
+Stores item association, generated filename, absolute stored path, original filename, MIME type, byte size, primary-photo flag, workflow status, and creation timestamp. Image bytes are never stored in SQLite.
+
+An unattached photo can have `pending` or `inbox` status. Saving an item associates its selected upload and changes the status to `attached`.
+
+### `settings`
+
+Stores small application markers and preferences. The initial sample-data marker prevents deleted samples from being recreated automatically.
+
+## Migrations
+
+Schema definitions live in `db/schema.ts`.
+
+After changing that file:
+
+```bash
+pnpm db:generate
+```
+
+Review the new SQL file under `drizzle/`, then apply it:
+
+```bash
+pnpm db:init
+```
+
+Migrations are tracked in SQLite’s `__drizzle_migrations` table and are safe to run repeatedly.
+
+## Initialization
+
+`pnpm db:init`:
+
+1. creates `data/` and `data/uploads/`;
+2. opens `data/manuix.sqlite`;
+3. enables WAL mode and foreign keys;
+4. applies pending Drizzle migrations;
+5. adds the sample inventory only if it has never been seeded.
+
+It does not erase or replace existing personal inventory.
+
+## Backup integrity
+
+Stop the server and copy the complete `data/` directory for the simplest backup. This keeps the database and photo originals together. If the server must stay running, use SQLite’s `.backup` command rather than copying only the live `.sqlite` file.

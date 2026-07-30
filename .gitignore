@@ -40,3 +40,11 @@ next-env.d.ts
 /.wrangler/
 /outputs/
 /work/
+
+# Manuix personal data (never commit)
+/data/
+
+# local native dependency build caches
+/.node-gyp/
+/.npm-cache/
+/.pnpm-store/

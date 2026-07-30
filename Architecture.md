@@ -1,79 +1,70 @@
 # Manuix Architecture
 
-## Goals
+## Architecture summary
 
-The architecture protects four product qualities:
+Manuix is a local Next.js application. The browser renders the product UI; Node.js API routes own all durable data access.
 
-1. The core inventory remains useful without a network, account, or AI service.
-2. Product workflows are easy to understand and test.
-3. Persistence is replaceable without rewriting the UI.
-4. Future desktop and AI capabilities attach at explicit boundaries.
+```text
+React UI
+   │ fetch / FormData
+   ▼
+Next.js API routes
+   ├── Drizzle ORM ──► data/manuix.sqlite
+   └── File I/O ─────► data/uploads/
+```
 
-## Application layers
+There is no Cloudflare binding, localStorage inventory fallback, or browser-side SQLite runtime.
 
-### Presentation
+## Layers
 
-`ManuixApp.tsx` contains the current product surfaces and their interaction state. The MVP is intentionally composed as one client application so navigation, inspector transitions, search, and editing feel immediate. Reusable visual primitives such as item cards, metrics, browse panels, fields, and info groups are colocated while the component set is still small.
+### UI
 
-`globals.css` is a compact design system. Semantic color tokens drive both themes. Breakpoints cover desktop, tablet, and narrow phone layouts. Motion respects `prefers-reduced-motion`.
+`app/src/ManuixApp.tsx` implements the product workflows. It obtains inventory and catalog data through `app/src/repository.ts`, which is an HTTP client rather than a persistence implementation.
 
-### Domain
+The browser retains only temporary interaction state such as the active view, open inspector, search query, and theme. Inventory records and photo paths always come from the server.
 
-`types.ts` is the canonical inventory model. `inventory.ts` holds pure queries and calculations, including broad search and completeness metrics. Keeping these functions independent from React and persistence makes them deterministic and cheap to test.
+### API
 
-The item model already distinguishes permanent location from collections. That preserves the key Manuix invariant: organizing an object by purpose never changes where it physically lives.
+- `app/api/items/route.ts`: list and save inventory items
+- `app/api/items/[id]/route.ts`: delete an item
+- `app/api/items/reset/route.ts`: explicitly restore sample data
+- `app/api/catalog/route.ts`: locations, collections, counts, and Inbox
+- `app/api/uploads/route.ts`: validate and persist uploads
+- `app/api/uploads/[filename]/route.ts`: serve a local original safely
+
+Routes use the Node.js runtime so native SQLite and filesystem access remain available.
 
 ### Persistence
 
-`repository.ts` exposes a small asynchronous repository:
+`db/index.ts` owns the SQLite connection, project-local paths, pragmas, and migration application. The connection is cached across development reloads.
 
-- `list`
-- `save`
-- `remove`
-- `reset`
+`db/queries.ts` contains relational reads and transactional writes. UI and route code do not construct SQL directly.
 
-The primary adapter uses SQLite compiled to WebAssembly. It stores records locally and requires no server. A defensive local-storage adapter is used only if SQLite cannot initialize in a browser. UI components know nothing about either implementation.
+`db/seed.ts` adds sample data once using a database marker. Deleting a sample item does not make it reappear on the next request.
 
-The current SQLite table stores the versioned item payload as JSON alongside indexed identity and timestamps. This is deliberate for the MVP: the product model can evolve quickly while persistence stays robust. High-value relational fields can be normalized behind the same repository as reporting requirements grow.
+### Migrations
 
-### Capability boundaries
+`db/schema.ts` is the source of truth. Drizzle generates SQL files in `drizzle/`. `pnpm db:init` and the first database request apply all committed migrations in order.
 
-`ImageAnalysisProvider` and `SemanticSearchProvider` define future AI contracts. Both are `null` in the shipping product. No core workflow checks for or depends on them.
+## Write flow
 
-A future `PhotoRepository` can move image bytes from browser-managed storage into an OS folder in a desktop wrapper. Inventory records already treat `photo` as a reference-like field, so that transition does not require a UI redesign.
+1. The validated form produces an inventory record.
+2. A selected photo is uploaded first as multipart form data.
+3. The upload route writes the original to `data/uploads/` and creates photo metadata.
+4. The item route upserts the item inside a transaction.
+5. The transaction synchronizes its location, collections, tags, and photo association.
+6. The UI refreshes database-backed catalog counts.
 
-## State flow
+## Reliability choices
 
-1. Manuix loads inventory through the repository.
-2. The UI derives metrics and filtered views with pure functions.
-3. Create/edit forms validate input before producing an `ItemDraft`.
-4. The application converts the draft to a timestamped domain record.
-5. The repository commits it locally.
-6. UI state updates optimistically from the saved record.
+- One SQLite database file and one uploads folder make backup understandable.
+- WAL mode protects normal local writes and improves read/write behavior.
+- Foreign keys and cascading deletes prevent orphaned relationships.
+- A 5-second busy timeout handles brief local lock contention.
+- Upload names are generated UUIDs; original names are stored only as metadata.
+- Upload routes allow known image types, enforce a 20 MB limit, and prevent path traversal.
+- `data/` and native build caches are ignored by Git.
 
-Errors at initial load produce a recoverable error state. Empty queries and empty inventories have distinct states.
+## Future extension points
 
-## Key decisions
-
-### One complete workflow first
-
-The implemented vertical slice covers discover → inspect → create/edit → persist → report. Inbox automation, taxonomy editing, and Zones are intentionally shallow or deferred so the core loop is cohesive.
-
-### SQLite in the browser
-
-WebAssembly provides real SQLite semantics without adding a local server or Docker. Browser storage is appropriate for the web MVP; a native shell can later point the same repository interface at a conventional SQLite file.
-
-### No AI in the core
-
-AI will be an optional adapter, not an implicit dependency. Manual capture, search, and organization must remain excellent if no provider is ever configured.
-
-## Testing strategy
-
-- Pure domain tests cover search and metrics.
-- Production builds provide TypeScript and bundling validation.
-- Repository integration tests should be added in a browser test environment when migration work begins.
-- Future high-risk workflows—bulk imports, file moves, and backup restoration—should receive end-to-end tests before release.
-
-## Security and privacy
-
-The MVP sends no inventory data over the network. There are no credentials, user sessions, analytics calls, or remote image processors. Browser-origin storage is private to the local profile but is not an encrypted vault. Device encryption and OS account security remain relevant.
+The existing image-analysis and semantic-search interfaces remain inactive. A future desktop shell can reuse the schema and query layer while choosing a different application-data directory.

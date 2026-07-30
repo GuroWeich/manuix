@@ -35,9 +35,9 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
-import { collections, locations } from "./data";
 import { filterItems, formatCurrency, inventoryMetrics } from "./inventory";
 import { inventoryRepository } from "./repository";
+import type { Catalog, CollectionSummary, InboxPhoto, LocationSummary } from "./repository";
 import type { InventoryItem, ItemDraft } from "./types";
 
 type Section = "Dashboard" | "Inventory" | "Locations" | "Collections" | "Inbox" | "Reports" | "Settings";
@@ -47,7 +47,7 @@ const nav = [
   { label: "Inventory", icon: Package },
   { label: "Locations", icon: MapPin },
   { label: "Collections", icon: Boxes },
-  { label: "Inbox", icon: Inbox, badge: "3" },
+  { label: "Inbox", icon: Inbox },
   { label: "Reports", icon: BarChart3 },
   { label: "Settings", icon: Settings },
 ] as const;
@@ -118,6 +118,7 @@ function getVisualSymbol(visual: string) {
 export function ManuixApp() {
   const [section, setSection] = useState<Section>("Dashboard");
   const [items, setItems] = useState<InventoryItem[]>([]);
+  const [catalog, setCatalog] = useState<Catalog>({ locations: [], collections: [], inbox: [] });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
@@ -133,7 +134,12 @@ export function ManuixApp() {
     try {
       setError("");
       setLoading(true);
-      setItems(await inventoryRepository.list());
+      const [storedItems, storedCatalog] = await Promise.all([
+        inventoryRepository.list(),
+        inventoryRepository.catalog(),
+      ]);
+      setItems(storedItems);
+      setCatalog(storedCatalog);
     } catch {
       setError("Manuix couldn’t open your local inventory.");
     } finally {
@@ -142,9 +148,11 @@ export function ManuixApp() {
   }, []);
 
   useEffect(() => {
-    inventoryRepository
-      .list()
-      .then((storedItems) => setItems(storedItems))
+    Promise.all([inventoryRepository.list(), inventoryRepository.catalog()])
+      .then(([storedItems, storedCatalog]) => {
+        setItems(storedItems);
+        setCatalog(storedCatalog);
+      })
       .catch(() => setError("Manuix couldn’t open your local inventory."))
       .finally(() => setLoading(false));
   }, []);
@@ -189,6 +197,7 @@ export function ManuixApp() {
     };
     await inventoryRepository.save(item);
     setItems((current) => [item, ...current.filter((candidate) => candidate.id !== item.id)]);
+    setCatalog(await inventoryRepository.catalog());
     setSelected(item);
     setEditing(null);
     setToast(existing ? "Changes saved" : "Item added to inventory");
@@ -196,9 +205,10 @@ export function ManuixApp() {
 
   async function duplicateItem(item: InventoryItem) {
     const now = new Date().toISOString();
-    const copy = { ...item, id: crypto.randomUUID(), name: `${item.name} copy`, createdAt: now, updatedAt: now };
+    const copy = { ...item, id: crypto.randomUUID(), name: `${item.name} copy`, photo: null, createdAt: now, updatedAt: now };
     await inventoryRepository.save(copy);
     setItems((current) => [copy, ...current]);
+    setCatalog(await inventoryRepository.catalog());
     setSelected(copy);
     setToast("Item duplicated");
   }
@@ -207,6 +217,7 @@ export function ManuixApp() {
     if (!window.confirm(`Remove “${item.name}” from your inventory?`)) return;
     await inventoryRepository.remove(item.id);
     setItems((current) => current.filter((candidate) => candidate.id !== item.id));
+    setCatalog(await inventoryRepository.catalog());
     setSelected(null);
     setToast("Item removed");
   }
@@ -221,14 +232,14 @@ export function ManuixApp() {
         </div>
         <nav aria-label="Main navigation">
           <p className="nav-eyebrow">Workspace</p>
-          {nav.slice(0, 5).map(({ label, icon: Icon, ...entry }) => (
+          {nav.slice(0, 5).map(({ label, icon: Icon }) => (
             <button
               key={label}
               className={section === label ? "nav-item active" : "nav-item"}
               onClick={() => { setSection(label); setSelected(null); setMobileNav(false); }}
             >
               <Icon size={18} strokeWidth={1.8} /><span>{label}</span>
-              {"badge" in entry && <em>{entry.badge}</em>}
+              {label === "Inbox" && catalog.inbox.length > 0 && <em>{catalog.inbox.length}</em>}
             </button>
           ))}
           <p className="nav-eyebrow">Insights</p>
@@ -283,6 +294,8 @@ export function ManuixApp() {
               {section === "Dashboard" && (
                 <Dashboard
                   items={items}
+                  locations={catalog.locations}
+                  collections={catalog.collections}
                   metrics={metrics}
                   onBrowse={() => setSection("Inventory")}
                   onSelect={setSelected}
@@ -305,9 +318,9 @@ export function ManuixApp() {
                   onAdd={() => setEditing("new")}
                 />
               )}
-              {section === "Locations" && <LocationsView onBrowse={(location) => { setQuery(location); setSection("Inventory"); }} />}
-              {section === "Collections" && <CollectionsView onBrowse={(collection) => { setQuery(collection); setSection("Inventory"); }} />}
-              {section === "Inbox" && <InboxView onCreate={() => setEditing("new")} />}
+              {section === "Locations" && <LocationsView locations={catalog.locations} itemCount={items.length} onBrowse={(location) => { setQuery(location); setSection("Inventory"); }} />}
+              {section === "Collections" && <CollectionsView collections={catalog.collections} onBrowse={(collection) => { setQuery(collection); setSection("Inventory"); }} />}
+              {section === "Inbox" && <InboxView photos={catalog.inbox} onCreate={() => setEditing("new")} onImported={async () => setCatalog(await inventoryRepository.catalog())} />}
               {section === "Reports" && <ReportsView items={items} metrics={metrics} />}
               {section === "Settings" && <SettingsView theme={theme} setTheme={setTheme} onReset={async () => { await inventoryRepository.reset(); await loadItems(); setToast("Sample inventory restored"); }} />}
             </>
@@ -345,8 +358,10 @@ function PageHeading({ eyebrow, title, copy, actions }: { eyebrow?: string; titl
   );
 }
 
-function Dashboard({ items, metrics, onBrowse, onSelect, onAdd, onSearch }: {
+function Dashboard({ items, locations, collections, metrics, onBrowse, onSelect, onAdd, onSearch }: {
   items: InventoryItem[];
+  locations: LocationSummary[];
+  collections: CollectionSummary[];
   metrics: ReturnType<typeof inventoryMetrics>;
   onBrowse: () => void;
   onSelect: (item: InventoryItem) => void;
@@ -443,17 +458,17 @@ function EmptyInventory({ query, onAdd }: { query: string; onAdd: () => void }) 
   return <div className="empty-state"><div><Package size={28} /></div><h2>{query ? "Nothing matches that search" : "Your first item starts here"}</h2><p>{query ? "Try a different name, tag, place, or category." : "Add an object you care about and Manuix will help you remember every detail."}</p>{!query && <button className="primary-button" onClick={onAdd}><Plus size={17} /> Add your first item</button>}</div>;
 }
 
-function LocationsView({ onBrowse }: { onBrowse: (value: string) => void }) {
+function LocationsView({ locations, itemCount, onBrowse }: { locations: LocationSummary[]; itemCount: number; onBrowse: (value: string) => void }) {
   return (
     <div className="page">
       <PageHeading eyebrow="Permanent places" title="Locations" copy="A clear map of where everything lives." />
-      <div className="location-hero"><div><MapPin size={24} /><span><small>Home</small><strong>8 inventoried objects</strong></span></div><div className="location-path"><span>Garage</span><i /><span>Office</span><i /><span>Hall</span><i /><span>Kitchen</span></div></div>
+      <div className="location-hero"><div><MapPin size={24} /><span><small>Local inventory</small><strong>{itemCount} inventoried objects</strong></span></div><div className="location-path">{locations.slice(0, 4).map((place, index) => <span key={place.path}>{index > 0 && <i />}{place.name}</span>)}</div></div>
       <div className="location-grid">{locations.map((place, index) => <button className="location-card" onClick={() => onBrowse(place.name)} key={place.name}><div className={`location-art ${place.color}`}><span>{index === 0 ? "⌂" : index === 1 ? "▦" : index === 2 ? "▥" : "◫"}</span></div><div><span><strong>{place.name}</strong><small>{place.path}</small></span><em>{place.count}</em></div></button>)}</div>
     </div>
   );
 }
 
-function CollectionsView({ onBrowse }: { onBrowse: (value: string) => void }) {
+function CollectionsView({ collections, onBrowse }: { collections: CollectionSummary[]; onBrowse: (value: string) => void }) {
   return (
     <div className="page">
       <PageHeading eyebrow="Organized by purpose" title="Collections" copy="Bring related items together without changing where they live." actions={<button className="secondary-button"><Plus size={17} /> New collection</button>} />
@@ -463,14 +478,24 @@ function CollectionsView({ onBrowse }: { onBrowse: (value: string) => void }) {
   );
 }
 
-function InboxView({ onCreate }: { onCreate: () => void }) {
-  const candidates = ["IMG_4028.HEIC", "IMG_4029.HEIC", "garage-bin.jpg"];
+function InboxView({ photos, onCreate, onImported }: { photos: InboxPhoto[]; onCreate: () => void; onImported: () => Promise<void> }) {
+  const [importing, setImporting] = useState(false);
+  async function importPhotos(files: FileList | null) {
+    if (!files?.length) return;
+    setImporting(true);
+    try {
+      for (const file of Array.from(files)) await inventoryRepository.upload(file, "inbox");
+      await onImported();
+    } finally {
+      setImporting(false);
+    }
+  }
   return (
     <div className="page">
-      <PageHeading eyebrow="Review & organize" title="Inbox" copy="Turn loose photos into complete inventory records." actions={<button className="primary-button"><Upload size={17} /> Import photos</button>} />
-      <div className="inbox-summary"><div><Inbox size={21} /><span><strong>3 photos to review</strong><small>Imported today from Home Inventory</small></span></div><button>Review all <ChevronRight size={16} /></button></div>
-      <div className="inbox-grid">{candidates.map((name, index) => <article className="inbox-card" key={name}><div className={`inbox-image inbox-${index}`}><ImageOff size={24} /><span>Original stored locally</span></div><div><span><strong>{name}</strong><small>Today, 4:{12 + index * 7} PM</small></span><button onClick={onCreate}><Plus size={15} /> Create item</button></div></article>)}</div>
-      <div className="drop-zone"><Upload size={24} /><strong>Drop a folder of images here</strong><span>JPEG, PNG, HEIC · Originals remain on this device</span></div>
+      <PageHeading eyebrow="Review & organize" title="Inbox" copy="Turn loose photos into complete inventory records." actions={<label className="primary-button"><Upload size={17} /> {importing ? "Importing…" : "Import photos"}<input hidden multiple type="file" accept="image/*" onChange={(event) => void importPhotos(event.target.files)} /></label>} />
+      <div className="inbox-summary"><div><Inbox size={21} /><span><strong>{photos.length} {photos.length === 1 ? "photo" : "photos"} to review</strong><small>Originals are stored in the local Manuix data folder</small></span></div>{photos.length > 0 && <button>Review all <ChevronRight size={16} /></button>}</div>
+      {photos.length > 0 ? <div className="inbox-grid">{photos.map((photo) => <article className="inbox-card" key={photo.id}><div className="inbox-image"><img src={photo.url} alt="" /></div><div><span><strong>{photo.name}</strong><small>{new Date(photo.createdAt).toLocaleString()}</small></span><button onClick={onCreate}><Plus size={15} /> Create item</button></div></article>)}</div> : <div className="empty-state"><div><Inbox size={28} /></div><h2>Your inbox is clear</h2><p>Import photos when you are ready to turn them into inventory records.</p></div>}
+      <label className="drop-zone"><Upload size={24} /><strong>{importing ? "Saving photos locally…" : "Choose images to add to Inbox"}</strong><span>JPEG, PNG, WebP, GIF, HEIC · Up to 20 MB each</span><input hidden multiple type="file" accept="image/*" onChange={(event) => void importPhotos(event.target.files)} /></label>
     </div>
   );
 }
@@ -495,7 +520,7 @@ function SettingsView({ theme, setTheme, onReset }: { theme: "light" | "dark"; s
     <div className="page settings-page">
       <PageHeading eyebrow="Your workspace" title="Settings" copy="Keep Manuix comfortable, private, and yours." />
       <section className="settings-card"><h2>Appearance</h2><p>Choose how Manuix looks on this device.</p><div className="theme-choice"><button className={theme === "light" ? "active" : ""} onClick={() => setTheme("light")}><span className="theme-preview light-preview"><i /><i /><i /></span><span><Sun size={16} /> Light</span>{theme === "light" && <Check size={16} />}</button><button className={theme === "dark" ? "active" : ""} onClick={() => setTheme("dark")}><span className="theme-preview dark-preview"><i /><i /><i /></span><span><Moon size={16} /> Dark</span>{theme === "dark" && <Check size={16} />}</button></div></section>
-      <section className="settings-card"><h2>Local data</h2><p>Your SQLite inventory and original image files stay in local browser storage.</p><div className="setting-row"><span className="metric-icon green"><Archive size={18} /></span><span><strong>On-device storage</strong><small>No account, cloud database, or network connection required</small></span><em>Healthy</em></div><button className="danger-link" onClick={onReset}>Restore sample inventory</button></section>
+      <section className="settings-card"><h2>Local data</h2><p>Your SQLite database and original image files stay in this project&apos;s data folder on your Mac.</p><div className="setting-row"><span className="metric-icon green"><Archive size={18} /></span><span><strong>Project-local storage</strong><small>No account, cloud database, or network connection required</small></span><em>Healthy</em></div><button className="danger-link" onClick={onReset}>Restore sample inventory</button></section>
       <section className="settings-card shortcuts"><h2>Keyboard shortcuts</h2><div><span>Search anywhere</span><kbd>⌘ K</kbd></div><div><span>Add a new item</span><kbd>⌘ N</kbd></div><div><span>Close a panel</span><kbd>Esc</kbd></div></section>
     </div>
   );
@@ -530,9 +555,12 @@ function InfoGroup({ title, children }: { title: string; children: React.ReactNo
 function ItemModal({ item, onClose, onSave }: { item?: InventoryItem; onClose: () => void; onSave: (draft: ItemDraft) => void }) {
   const { register, handleSubmit, formState: { errors, isSubmitting }, setValue, watch } = useForm<ItemFormValues>({ resolver: zodResolver(itemSchema), defaultValues: item ? itemToForm(item) : EMPTY_FORM });
   const [photo, setPhoto] = useState<string | null>(item?.photo ?? null);
+  const [photoUploading, setPhotoUploading] = useState(false);
+  const [photoError, setPhotoError] = useState("");
   const [formSection, setFormSection] = useState<"essential" | "details">("essential");
 
   function submit(values: ItemFormValues) {
+    if (photoUploading) return;
     const parseNumber = (value: string) => value.trim() ? Number(value) : null;
     onSave({
       name: values.name,
@@ -553,11 +581,18 @@ function ItemModal({ item, onClose, onSave }: { item?: InventoryItem; onClose: (
     });
   }
 
-  function handlePhoto(file?: File) {
+  async function handlePhoto(file?: File) {
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => setPhoto(reader.result as string);
-    reader.readAsDataURL(file);
+    setPhotoError("");
+    setPhotoUploading(true);
+    try {
+      const uploaded = await inventoryRepository.upload(file);
+      setPhoto(uploaded.url);
+    } catch (error) {
+      setPhotoError(error instanceof Error ? error.message : "Photo upload failed.");
+    } finally {
+      setPhotoUploading(false);
+    }
   }
 
   return (
@@ -570,8 +605,8 @@ function ItemModal({ item, onClose, onSave }: { item?: InventoryItem; onClose: (
           {formSection === "essential" ? (
             <>
               <label className={`photo-drop ${photo ? "has-photo" : ""}`}>
-                {photo ? <img src={photo} alt="Selected item" /> : <><Upload size={22} /><strong>Add a photo</strong><span>Choose an original from this device</span></>}
-                <input type="file" accept="image/*" onChange={(event) => handlePhoto(event.target.files?.[0])} />
+                {photo ? <img src={photo} alt="Selected item" /> : <><Upload size={22} /><strong>{photoUploading ? "Saving photo locally…" : "Add a photo"}</strong><span>{photoError || "Choose an original from this device"}</span></>}
+                <input disabled={photoUploading} type="file" accept="image/*" onChange={(event) => void handlePhoto(event.target.files?.[0])} />
               </label>
               <div className="field-grid">
                 <Field label="Item name" error={errors.name?.message} wide><input autoFocus placeholder="e.g. Film camera" {...register("name")} /></Field>
@@ -599,7 +634,7 @@ function ItemModal({ item, onClose, onSave }: { item?: InventoryItem; onClose: (
           <div>
             {formSection === "details" && <button type="button" className="secondary-button" onClick={() => setFormSection("essential")}>Back</button>}
             {formSection === "essential" ? <button type="button" className="primary-button" onClick={() => { setValue("name", watch("name"), { shouldValidate: true }); setFormSection("details"); }}>Continue <ChevronRight size={17} /></button>
-              : <button className="primary-button" disabled={isSubmitting}>{item ? "Save changes" : "Add to inventory"}</button>}
+              : <button className="primary-button" disabled={isSubmitting || photoUploading}>{photoUploading ? "Saving photo…" : item ? "Save changes" : "Add to inventory"}</button>}
           </div>
         </div>
       </form>

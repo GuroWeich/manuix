@@ -1,92 +1,55 @@
 import type { InventoryItem } from "./types";
-import { seedItems } from "./data";
 
-const FALLBACK_KEY = "manuix.inventory.v1";
-let sqliteDb: {
-  exec: (options: unknown) => unknown;
-  selectObjects: (sql: string, bind?: unknown[]) => unknown[];
-} | null = null;
+export type LocationSummary = { name: string; path: string; count: number; color: string };
+export type CollectionSummary = { name: string; count: number; icon: string; color: string };
+export type InboxPhoto = { id: string; name: string; url: string; createdAt: string };
+export type Catalog = {
+  locations: LocationSummary[];
+  collections: CollectionSummary[];
+  inbox: InboxPhoto[];
+};
 
-function cloneSeed() {
-  return seedItems.map((item) => ({ ...item, collections: [...item.collections], tags: [...item.tags] }));
-}
-
-async function openSqlite() {
-  if (sqliteDb) return sqliteDb;
-  try {
-    const { default: sqlite3InitModule } = await import("@sqlite.org/sqlite-wasm");
-    const sqlite3 = await sqlite3InitModule({ print: () => undefined, printErr: () => undefined });
-    const Db = sqlite3.oo1.JsStorageDb ?? sqlite3.oo1.DB;
-    sqliteDb = new Db("local", "c");
-    sqliteDb.exec(`
-      CREATE TABLE IF NOT EXISTS inventory_items (
-        id TEXT PRIMARY KEY,
-        payload TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-    `);
-    return sqliteDb;
-  } catch {
-    return null;
+async function requestJson<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
+  const response = await fetch(input, { ...init, cache: "no-store" });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({ error: "Request failed." }));
+    throw new Error(body.error ?? "Request failed.");
   }
-}
-
-function readFallback(): InventoryItem[] {
-  const stored = localStorage.getItem(FALLBACK_KEY);
-  if (!stored) {
-    const seeded = cloneSeed();
-    localStorage.setItem(FALLBACK_KEY, JSON.stringify(seeded));
-    return seeded;
-  }
-  return JSON.parse(stored) as InventoryItem[];
-}
-
-function writeFallback(items: InventoryItem[]) {
-  localStorage.setItem(FALLBACK_KEY, JSON.stringify(items));
+  return response.json() as Promise<T>;
 }
 
 export const inventoryRepository = {
-  async list(): Promise<InventoryItem[]> {
-    const db = await openSqlite();
-    if (!db) return readFallback();
-    const rows = db.selectObjects("SELECT payload FROM inventory_items ORDER BY created_at DESC") as Array<{ payload: string }>;
-    if (!rows.length) {
-      for (const item of cloneSeed()) await this.save(item);
-      return cloneSeed();
-    }
-    return rows.map((row) => JSON.parse(row.payload) as InventoryItem);
+  list() {
+    return requestJson<InventoryItem[]>("/api/items");
+  },
+
+  catalog() {
+    return requestJson<Catalog>("/api/catalog");
   },
 
   async save(item: InventoryItem) {
-    const db = await openSqlite();
-    if (!db) {
-      const items = readFallback();
-      const next = [item, ...items.filter((candidate) => candidate.id !== item.id)];
-      writeFallback(next);
-      return;
-    }
-    db.exec({
-      sql: `INSERT INTO inventory_items (id, payload, created_at, updated_at)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at`,
-      bind: [item.id, JSON.stringify(item), item.createdAt, item.updatedAt],
+    await requestJson<InventoryItem>("/api/items", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(item),
     });
   },
 
   async remove(id: string) {
-    const db = await openSqlite();
-    if (!db) {
-      writeFallback(readFallback().filter((item) => item.id !== id));
-      return;
-    }
-    db.exec({ sql: "DELETE FROM inventory_items WHERE id = ?", bind: [id] });
+    await requestJson<{ ok: true }>(`/api/items/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
   },
 
   async reset() {
-    localStorage.removeItem(FALLBACK_KEY);
-    const db = await openSqlite();
-    if (db) db.exec("DELETE FROM inventory_items");
+    await requestJson<{ ok: true }>("/api/items/reset", { method: "POST" });
+  },
+
+  async upload(file: File, status: "pending" | "inbox" = "pending") {
+    const body = new FormData();
+    body.append("file", file);
+    body.append("status", status);
+    return requestJson<InboxPhoto>("/api/uploads", { method: "POST", body });
   },
 };
 
