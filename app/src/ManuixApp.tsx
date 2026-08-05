@@ -132,6 +132,7 @@ export function ManuixApp() {
   const [view, setView] = useState<"grid" | "list">("grid");
   const [selected, setSelected] = useState<InventoryItem | null>(null);
   const [editing, setEditing] = useState<InventoryItem | "new" | null>(null);
+  const [newItemPhoto, setNewItemPhoto] = useState<InboxPhoto | null>(null);
   const [mobileNav, setMobileNav] = useState(false);
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const [toast, setToast] = useState("");
@@ -173,6 +174,7 @@ export function ManuixApp() {
       }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "n") {
         event.preventDefault();
+        setNewItemPhoto(null);
         setEditing("new");
       }
       if (event.key === "Escape") {
@@ -196,6 +198,11 @@ export function ManuixApp() {
   );
   const filtered = useMemo(() => filterItems(items, query, { category, locationPath: locationFilter, collectionName: collectionFilter }), [items, query, category, locationFilter, collectionFilter]);
 
+  function startNewItem(photo?: InboxPhoto) {
+    setNewItemPhoto(photo ?? null);
+    setEditing("new");
+  }
+
   async function saveItem(draft: ItemDraft, existing?: InventoryItem) {
     const now = new Date().toISOString();
     const item: InventoryItem = {
@@ -209,6 +216,7 @@ export function ManuixApp() {
     setCatalog(await inventoryRepository.catalog());
     setSelected(item);
     setEditing(null);
+    setNewItemPhoto(null);
     setToast(existing ? "Changes saved" : "Item added to inventory");
   }
 
@@ -293,7 +301,7 @@ export function ManuixApp() {
             <button className="icon-button" onClick={() => setTheme(theme === "light" ? "dark" : "light")} aria-label="Toggle theme">
               {theme === "light" ? <Moon size={18} /> : <Sun size={18} />}
             </button>
-            <button className="primary-button compact" onClick={() => setEditing("new")}><Plus size={18} /> Add item</button>
+            <button className="primary-button compact" onClick={() => startNewItem()}><Plus size={18} /> Add item</button>
           </div>
         </header>
 
@@ -308,7 +316,7 @@ export function ManuixApp() {
                   metrics={metrics}
                   onBrowse={() => setSection("Inventory")}
                   onSelect={setSelected}
-                  onAdd={() => setEditing("new")}
+                  onAdd={() => startNewItem()}
                   onSearch={(value) => { setQuery(value); setLocationFilter(undefined); setCollectionFilter(undefined); setSection("Inventory"); }}
                 />
               )}
@@ -326,12 +334,12 @@ export function ManuixApp() {
                   view={view}
                   setView={setView}
                   onSelect={setSelected}
-                  onAdd={() => setEditing("new")}
+                  onAdd={() => startNewItem()}
                 />
               )}
               {section === "Locations" && <LocationsView locations={catalog.locations} itemCount={items.length} onBrowse={(location) => { setQuery(""); setCollectionFilter(undefined); setLocationFilter(location); setSection("Inventory"); }} />}
               {section === "Collections" && <CollectionsView collections={catalog.collections} onBrowse={(collection) => { setQuery(""); setLocationFilter(undefined); setCollectionFilter(collection); setSection("Inventory"); }} />}
-              {section === "Inbox" && <InboxView photos={catalog.inbox} onCreate={() => setEditing("new")} onImported={async () => setCatalog(await inventoryRepository.catalog())} />}
+              {section === "Inbox" && <InboxView photos={catalog.inbox} onCreate={startNewItem} onImported={async () => setCatalog(await inventoryRepository.catalog())} />}
               {section === "Reports" && <ReportsView items={items} metrics={metrics} />}
               {section === "Settings" && <SettingsView theme={theme} setTheme={setTheme} onReset={async () => { await inventoryRepository.reset(); await loadItems(); setToast("Sample inventory restored"); }} />}
             </>
@@ -355,7 +363,8 @@ export function ManuixApp() {
           locations={catalog.locations}
           collections={catalog.collections}
           onCollectionsChanged={async () => setCatalog(await inventoryRepository.catalog())}
-          onClose={() => setEditing(null)}
+          initialPhoto={editing === "new" ? newItemPhoto : null}
+          onClose={() => { setEditing(null); setNewItemPhoto(null); }}
           onSave={(draft) => void saveItem(draft, editing === "new" ? undefined : editing)}
         />
       )}
@@ -494,7 +503,7 @@ function CollectionsView({ collections, onBrowse }: { collections: CollectionSum
   );
 }
 
-function InboxView({ photos, onCreate, onImported }: { photos: InboxPhoto[]; onCreate: () => void; onImported: () => Promise<void> }) {
+function InboxView({ photos, onCreate, onImported }: { photos: InboxPhoto[]; onCreate: (photo?: InboxPhoto) => void; onImported: () => Promise<void> }) {
   const [importing, setImporting] = useState(false);
   async function importPhotos(files: FileList | null) {
     if (!files?.length) return;
@@ -510,10 +519,17 @@ function InboxView({ photos, onCreate, onImported }: { photos: InboxPhoto[]; onC
     <div className="page">
       <PageHeading eyebrow="Review & organize" title="Inbox" copy="Turn loose photos into complete inventory records." actions={<label className="primary-button"><Upload size={17} /> {importing ? "Importing…" : "Import photos"}<input hidden multiple type="file" accept="image/*" onChange={(event) => void importPhotos(event.target.files)} /></label>} />
       <div className="inbox-summary"><div><Inbox size={21} /><span><strong>{photos.length} {photos.length === 1 ? "photo" : "photos"} to review</strong><small>Originals are stored in the local Manuix data folder</small></span></div>{photos.length > 0 && <button>Review all <ChevronRight size={16} /></button>}</div>
-      {photos.length > 0 ? <div className="inbox-grid">{photos.map((photo) => <article className="inbox-card" key={photo.id}><div className="inbox-image"><img src={photo.url} alt="" /></div><div><span><strong>{photo.name}</strong><small>{new Date(photo.createdAt).toLocaleString()}</small></span><button onClick={onCreate}><Plus size={15} /> Create item</button></div></article>)}</div> : <div className="empty-state"><div><Inbox size={28} /></div><h2>Your inbox is clear</h2><p>Import photos when you are ready to turn them into inventory records.</p></div>}
+      {photos.length > 0 ? <div className="inbox-grid">{photos.map((photo) => <article className="inbox-card" key={photo.id}><div className="inbox-image"><PhotoPreview photo={photo} /></div><div><span><strong>{photo.name}</strong><small>{new Date(photo.createdAt).toLocaleString()}</small></span><button onClick={() => onCreate(photo)}><Plus size={15} /> Create item</button></div></article>)}</div> : <div className="empty-state"><div><Inbox size={28} /></div><h2>Your inbox is clear</h2><p>Import photos when you are ready to turn them into inventory records.</p></div>}
       <label className="drop-zone"><Upload size={24} /><strong>{importing ? "Saving photos locally…" : "Choose images to add to Inbox"}</strong><span>JPEG, PNG, WebP, GIF, HEIC · Up to 20 MB each</span><input hidden multiple type="file" accept="image/*" onChange={(event) => void importPhotos(event.target.files)} /></label>
     </div>
   );
+}
+
+function PhotoPreview({ photo }: { photo: InboxPhoto }) {
+  if (photo.mimeType === "image/heic" || photo.mimeType === "image/heif") {
+    return <><ImageOff size={24} /><span>HEIC original saved locally</span></>;
+  }
+  return <img src={photo.url} alt="" />;
 }
 
 function ReportsView({ items, metrics }: { items: InventoryItem[]; metrics: ReturnType<typeof inventoryMetrics> }) {
@@ -575,10 +591,10 @@ function InfoGroup({ title, children }: { title: string; children: React.ReactNo
   return <section className="info-group"><h3>{title}</h3>{children}</section>;
 }
 
-function ItemModal({ item, categories, locations, collections, onCollectionsChanged, onClose, onSave }: { item?: InventoryItem; categories: string[]; locations: LocationSummary[]; collections: CollectionSummary[]; onCollectionsChanged: () => Promise<void>; onClose: () => void; onSave: (draft: ItemDraft) => void }) {
+function ItemModal({ item, initialPhoto, categories, locations, collections, onCollectionsChanged, onClose, onSave }: { item?: InventoryItem; initialPhoto?: InboxPhoto | null; categories: string[]; locations: LocationSummary[]; collections: CollectionSummary[]; onCollectionsChanged: () => Promise<void>; onClose: () => void; onSave: (draft: ItemDraft) => void }) {
   const { control, register, handleSubmit, formState: { errors, isSubmitting }, trigger } = useForm<ItemFormValues>({ resolver: zodResolver(itemSchema), defaultValues: item ? itemToForm(item) : EMPTY_FORM });
   const itemName = useWatch({ control, name: "name" });
-  const [photo, setPhoto] = useState<string | null>(item?.photo ?? null);
+  const [photo, setPhoto] = useState<string | null>(item?.photo ?? initialPhoto?.url ?? null);
   const [photoUploading, setPhotoUploading] = useState(false);
   const [photoError, setPhotoError] = useState("");
   const [formSection, setFormSection] = useState<"essential" | "details">("essential");

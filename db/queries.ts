@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { collections, inventoryItems, itemCollections, itemTags, locations, photos, tags } from "./schema";
 import { getDatabase } from "./index";
+import { rm } from "node:fs/promises";
 import type { InventoryItem } from "../app/src/types";
 import { normalizeCollectionName } from "../app/src/collections";
 
@@ -141,7 +142,21 @@ export async function saveItem(item: InventoryItem) {
 }
 
 export async function removeItem(id: string) {
-  await getDatabase().delete(inventoryItems).where(eq(inventoryItems.id, id));
+  const db = getDatabase();
+  const attachedPhotos = await db
+    .select({ storedPath: photos.storedPath })
+    .from(photos)
+    .where(eq(photos.itemId, id));
+
+  await db.delete(inventoryItems).where(eq(inventoryItems.id, id));
+
+  await Promise.all(attachedPhotos.map(async (photo) => {
+    try {
+      await rm(photo.storedPath, { force: true });
+    } catch {
+      // The inventory record is already gone; missing or locked files should not make deletion unsafe.
+    }
+  }));
 }
 
 export async function listCatalog() {
@@ -169,6 +184,7 @@ export async function listCatalog() {
       id: photo.id,
       name: photo.originalName,
       url: `/api/uploads/${encodeURIComponent(photo.filename)}`,
+      mimeType: photo.mimeType,
       createdAt: photo.createdAt,
     })),
   };

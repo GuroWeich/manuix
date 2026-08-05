@@ -2,7 +2,7 @@ import type { InventoryItem } from "./types";
 
 export type LocationSummary = { name: string; path: string; count: number; color: string };
 export type CollectionSummary = { name: string; count: number; icon: string; color: string };
-export type InboxPhoto = { id: string; name: string; url: string; createdAt: string };
+export type InboxPhoto = { id: string; name: string; url: string; mimeType: string; createdAt: string };
 export type Catalog = {
   locations: LocationSummary[];
   collections: CollectionSummary[];
