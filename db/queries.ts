@@ -1,7 +1,12 @@
-import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { collections, inventoryItems, itemCollections, itemTags, locations, photos, tags } from "./schema";
 import { getDatabase } from "./index";
 import type { InventoryItem } from "../app/src/types";
+import { normalizeCollectionName } from "../app/src/collections";
+
+export function isActiveInventoryRow() {
+  return sql`1 = 1`;
+}
 
 function slug(value: string) {
   return value.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
@@ -109,15 +114,16 @@ export async function saveItem(item: InventoryItem) {
 
     tx.delete(itemCollections).where(eq(itemCollections.itemId, item.id)).run();
     for (const collectionName of item.collections) {
-      const collectionId = `collection-${slug(collectionName)}`;
-      tx.insert(collections).values({
-        id: collectionId,
-        name: collectionName,
-        icon: "◇",
-        color: "#dbe8e2",
-        createdAt: item.createdAt,
-      }).onConflictDoNothing().run();
-      tx.insert(itemCollections).values({ itemId: item.id, collectionId }).onConflictDoNothing().run();
+      const normalizedName = normalizeCollectionName(collectionName);
+      const existingCollection = tx
+        .select({ id: collections.id })
+        .from(collections)
+        .where(or(eq(collections.normalizedName, normalizedName), eq(sql`lower(trim(${collections.name}))`, normalizedName)))
+        .get();
+      if (!existingCollection) {
+        throw new Error(`Collection “${collectionName}” does not exist. Create it explicitly before assigning items.`);
+      }
+      tx.insert(itemCollections).values({ itemId: item.id, collectionId: existingCollection.id }).onConflictDoNothing().run();
     }
 
     tx.delete(itemTags).where(eq(itemTags.itemId, item.id)).run();
@@ -140,8 +146,8 @@ export async function removeItem(id: string) {
 
 export async function listCatalog() {
   const db = getDatabase();
-  const itemRows = await db.select({ locationId: inventoryItems.locationId }).from(inventoryItems);
-  const collectionLinks = await db.select().from(itemCollections);
+  const itemRows = await db.select({ id: inventoryItems.id, locationId: inventoryItems.locationId, locationPath: inventoryItems.locationPath }).from(inventoryItems).where(isActiveInventoryRow());
+  const collectionLinks = await db.select({ collectionId: itemCollections.collectionId, itemId: itemCollections.itemId }).from(itemCollections).innerJoin(inventoryItems, eq(itemCollections.itemId, inventoryItems.id)).where(isActiveInventoryRow());
   const locationRows = await db.select().from(locations).orderBy(asc(locations.path));
   const collectionRows = await db.select().from(collections).orderBy(asc(collections.name));
   const inboxRows = await db.select().from(photos).where(and(isNull(photos.itemId), eq(photos.status, "inbox"))).orderBy(desc(photos.createdAt));
@@ -151,13 +157,13 @@ export async function listCatalog() {
       name: location.name,
       path: location.path,
       color: location.color,
-      count: itemRows.filter((item) => item.locationId === location.id).length,
+      count: itemRows.filter((item) => item.locationPath === location.path || item.locationPath.startsWith(`${location.path} / `)).length,
     })),
     collections: collectionRows.map((collection) => ({
       name: collection.name,
       icon: collection.icon,
       color: collection.color,
-      count: collectionLinks.filter((link) => link.collectionId === collection.id).length,
+      count: new Set(collectionLinks.filter((link) => link.collectionId === collection.id).map((link) => link.itemId)).size,
     })),
     inbox: inboxRows.map((photo) => ({
       id: photo.id,
@@ -166,4 +172,24 @@ export async function listCatalog() {
       createdAt: photo.createdAt,
     })),
   };
+}
+
+
+export async function createCollection(name: string) {
+  const db = getDatabase();
+  const trimmed = name.trim();
+  const normalizedName = normalizeCollectionName(trimmed);
+  if (!normalizedName) throw new Error("Collection name is required.");
+  const existing = await db.select().from(collections).where(or(eq(collections.normalizedName, normalizedName), eq(sql`lower(trim(${collections.name}))`, normalizedName))).get();
+  if (existing) return existing;
+  const now = new Date().toISOString();
+  const id = `collection-${slug(trimmed) || "untitled"}-${crypto.randomUUID().slice(0, 8)}`;
+  try {
+    await db.insert(collections).values({ id, name: trimmed, normalizedName, icon: "◇", color: "#dbe8e2", createdAt: now }).run();
+  } catch {
+    const concurrent = await db.select().from(collections).where(eq(collections.normalizedName, normalizedName)).get();
+    if (concurrent) return concurrent;
+    throw new Error("Collection could not be created.");
+  }
+  return (await db.select().from(collections).where(eq(collections.id, id)).get())!;
 }

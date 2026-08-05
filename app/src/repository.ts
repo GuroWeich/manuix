@@ -27,6 +27,14 @@ export const inventoryRepository = {
     return requestJson<Catalog>("/api/catalog");
   },
 
+  async createCollection(name: string) {
+    await requestJson<CollectionSummary>("/api/collections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+  },
+
   async save(item: InventoryItem) {
     await requestJson<InventoryItem>("/api/items", {
       method: "POST",
