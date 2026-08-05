@@ -451,7 +451,6 @@ kbd { min-width: 28px; padding: 4px 7px; border: 1px solid var(--line); border-b
 @media (max-width: 1100px) {
   .metric-grid { grid-template-columns: repeat(2, 1fr); }
   .recent-grid, .inventory-grid, .location-grid { grid-template-columns: repeat(3, 1fr); }
-  .inventory-grid .item-card:nth-child(n+7) { display: none; }
 }
 
 @media (max-width: 880px) {

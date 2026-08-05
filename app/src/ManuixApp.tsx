@@ -37,7 +37,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 import { collectionItemLabel, findCollectionMatches, normalizeCollectionName } from "./collections";
-import { filterItems, formatCurrency, inventoryMetrics } from "./inventory";
+import { countInventoryItems, filterItems, formatCurrency, inventoryMetrics } from "./inventory";
 import { inventoryRepository } from "./repository";
 import type { Catalog, CollectionSummary, InboxPhoto, LocationSummary } from "./repository";
 import type { InventoryItem, ItemDraft } from "./types";
@@ -337,8 +337,8 @@ export function ManuixApp() {
                   onAdd={() => startNewItem()}
                 />
               )}
-              {section === "Locations" && <LocationsView locations={catalog.locations} itemCount={items.length} onBrowse={(location) => { setQuery(""); setCollectionFilter(undefined); setLocationFilter(location); setSection("Inventory"); }} />}
-              {section === "Collections" && <CollectionsView collections={catalog.collections} onBrowse={(collection) => { setQuery(""); setLocationFilter(undefined); setCollectionFilter(collection); setSection("Inventory"); }} />}
+              {section === "Locations" && <LocationsView locations={catalog.locations} itemCount={countInventoryItems(items)} onBrowse={(locationPath) => { setQuery(""); setCategory("All"); setCollectionFilter(undefined); setLocationFilter(locationPath); setSection("Inventory"); }} />}
+              {section === "Collections" && <CollectionsView collections={catalog.collections} onBrowse={(collection) => { setQuery(""); setCategory("All"); setLocationFilter(undefined); setCollectionFilter(collection); setSection("Inventory"); }} />}
               {section === "Inbox" && <InboxView photos={catalog.inbox} onCreate={startNewItem} onImported={async () => setCatalog(await inventoryRepository.catalog())} />}
               {section === "Reports" && <ReportsView items={items} metrics={metrics} />}
               {section === "Settings" && <SettingsView theme={theme} setTheme={setTheme} onReset={async () => { await inventoryRepository.reset(); await loadItems(); setToast("Sample inventory restored"); }} />}
@@ -488,7 +488,7 @@ function LocationsView({ locations, itemCount, onBrowse }: { locations: Location
     <div className="page">
       <PageHeading eyebrow="Permanent places" title="Locations" copy="A clear map of where everything lives." />
       <div className="location-hero"><div><MapPin size={24} /><span><small>Local inventory</small><strong>{itemCount} inventoried objects</strong></span></div><div className="location-path">{locations.slice(0, 4).map((place, index) => <span key={place.path}>{index > 0 && <i />}{place.name}</span>)}</div></div>
-      <div className="location-grid">{locations.map((place, index) => <button className="location-card" onClick={() => onBrowse(place.name)} key={place.name}><div className={`location-art ${place.color}`}><span>{index === 0 ? "⌂" : index === 1 ? "▦" : index === 2 ? "▥" : "◫"}</span></div><div><span><strong>{place.name}</strong><small>{place.path}</small></span><em>{place.count}</em></div></button>)}</div>
+      <div className="location-grid">{locations.map((place, index) => <button className="location-card" onClick={() => onBrowse(place.path)} key={place.path}><div className={`location-art ${place.color}`}><span>{index === 0 ? "⌂" : index === 1 ? "▦" : index === 2 ? "▥" : "◫"}</span></div><div><span><strong>{place.name}</strong><small>{place.path}</small></span><em>{place.count}</em></div></button>)}</div>
     </div>
   );
 }
