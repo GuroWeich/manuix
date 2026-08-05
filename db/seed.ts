@@ -2,6 +2,7 @@ import { seedItems, locations as seedLocations, collections as seedCollections }
 import { getDatabase } from "./index";
 import { collections, inventoryItems, locations, settings } from "./schema";
 import { saveItem } from "./queries";
+import { normalizeCollectionName } from "../app/src/collections";
 import { eq } from "drizzle-orm";
 
 export async function seedDatabase() {
@@ -23,6 +24,7 @@ export async function seedDatabase() {
     await db.insert(collections).values({
       id: `collection-${collection.name.toLowerCase()}`,
       name: collection.name,
+      normalizedName: normalizeCollectionName(collection.name),
       icon: collection.icon,
       color: collection.color,
       createdAt: now,

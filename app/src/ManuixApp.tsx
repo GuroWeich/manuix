@@ -36,6 +36,7 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
+import { collectionItemLabel, findCollectionMatches, normalizeCollectionName } from "./collections";
 import { filterItems, formatCurrency, inventoryMetrics } from "./inventory";
 import { inventoryRepository } from "./repository";
 import type { Catalog, CollectionSummary, InboxPhoto, LocationSummary } from "./repository";
@@ -125,6 +126,8 @@ export function ManuixApp() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
+  const [locationFilter, setLocationFilter] = useState<string | undefined>();
+  const [collectionFilter, setCollectionFilter] = useState<string | undefined>();
   const [category, setCategory] = useState("All");
   const [view, setView] = useState<"grid" | "list">("grid");
   const [selected, setSelected] = useState<InventoryItem | null>(null);
@@ -191,7 +194,7 @@ export function ManuixApp() {
     () => ["All", ...new Set([...DEFAULT_CATEGORIES, ...items.map((item) => item.category).filter(Boolean)])],
     [items],
   );
-  const filtered = useMemo(() => filterItems(items, query, category), [items, query, category]);
+  const filtered = useMemo(() => filterItems(items, query, { category, locationPath: locationFilter, collectionName: collectionFilter }), [items, query, category, locationFilter, collectionFilter]);
 
   async function saveItem(draft: ItemDraft, existing?: InventoryItem) {
     const now = new Date().toISOString();
@@ -306,7 +309,7 @@ export function ManuixApp() {
                   onBrowse={() => setSection("Inventory")}
                   onSelect={setSelected}
                   onAdd={() => setEditing("new")}
-                  onSearch={(value) => { setQuery(value); setSection("Inventory"); }}
+                  onSearch={(value) => { setQuery(value); setLocationFilter(undefined); setCollectionFilter(undefined); setSection("Inventory"); }}
                 />
               )}
               {section === "Inventory" && (
@@ -317,15 +320,17 @@ export function ManuixApp() {
                   category={category}
                   setCategory={setCategory}
                   query={query}
-                  setQuery={setQuery}
+                  setQuery={(value) => { setQuery(value); setLocationFilter(undefined); setCollectionFilter(undefined); }}
+                  activeScope={locationFilter ?? collectionFilter}
+                  clearScope={() => { setLocationFilter(undefined); setCollectionFilter(undefined); }}
                   view={view}
                   setView={setView}
                   onSelect={setSelected}
                   onAdd={() => setEditing("new")}
                 />
               )}
-              {section === "Locations" && <LocationsView locations={catalog.locations} itemCount={items.length} onBrowse={(location) => { setQuery(location); setSection("Inventory"); }} />}
-              {section === "Collections" && <CollectionsView collections={catalog.collections} onBrowse={(collection) => { setQuery(collection); setSection("Inventory"); }} />}
+              {section === "Locations" && <LocationsView locations={catalog.locations} itemCount={items.length} onBrowse={(location) => { setQuery(""); setCollectionFilter(undefined); setLocationFilter(location); setSection("Inventory"); }} />}
+              {section === "Collections" && <CollectionsView collections={catalog.collections} onBrowse={(collection) => { setQuery(""); setLocationFilter(undefined); setCollectionFilter(collection); setSection("Inventory"); }} />}
               {section === "Inbox" && <InboxView photos={catalog.inbox} onCreate={() => setEditing("new")} onImported={async () => setCatalog(await inventoryRepository.catalog())} />}
               {section === "Reports" && <ReportsView items={items} metrics={metrics} />}
               {section === "Settings" && <SettingsView theme={theme} setTheme={setTheme} onReset={async () => { await inventoryRepository.reset(); await loadItems(); setToast("Sample inventory restored"); }} />}
@@ -348,6 +353,8 @@ export function ManuixApp() {
           item={editing === "new" ? undefined : editing}
           categories={categories.slice(1)}
           locations={catalog.locations}
+          collections={catalog.collections}
+          onCollectionsChanged={async () => setCatalog(await inventoryRepository.catalog())}
           onClose={() => setEditing(null)}
           onSave={(draft) => void saveItem(draft, editing === "new" ? undefined : editing)}
         />
@@ -403,8 +410,8 @@ function Dashboard({ items, locations, collections, metrics, onBrowse, onSelect,
         <div className="recent-grid">{items.slice(0, 4).map((item) => <ItemCard key={item.id} item={item} onClick={() => onSelect(item)} />)}</div>
       </section>
       <div className="dashboard-columns">
-        <BrowsePanel title="Browse by location" icon={<MapPin size={19} />} items={locations.map((place) => ({ title: place.name, meta: `${place.count} items`, color: place.color }))} onBrowse={onSearch} />
-        <BrowsePanel title="Browse by collection" icon={<Boxes size={19} />} items={collections.map((group) => ({ title: group.name, meta: `${group.count} items`, color: group.color }))} onBrowse={onSearch} />
+        <BrowsePanel title="Browse by location" icon={<MapPin size={19} />} items={locations.map((place) => ({ title: place.name, value: place.path, meta: collectionItemLabel(place.count), color: place.color }))} onBrowse={(value) => { onSearch(value); }} />
+        <BrowsePanel title="Browse by collection" icon={<Boxes size={19} />} items={collections.map((group) => ({ title: group.name, meta: collectionItemLabel(group.count), color: group.color }))} onBrowse={onSearch} />
       </div>
     </div>
   );
@@ -414,23 +421,24 @@ function Metric({ icon, label, value, note, tone }: { icon: React.ReactNode; lab
   return <article className="metric-card"><div className={`metric-icon ${tone}`}>{icon}</div><span>{label}</span><strong>{value}</strong><small>{note}</small></article>;
 }
 
-function BrowsePanel({ title, icon, items, onBrowse }: { title: string; icon: React.ReactNode; items: Array<{ title: string; meta: string; color: string }>; onBrowse: (value: string) => void }) {
+function BrowsePanel({ title, icon, items, onBrowse }: { title: string; icon: React.ReactNode; items: Array<{ title: string; value?: string; meta: string; color: string }>; onBrowse: (value: string) => void }) {
   return (
     <section className="browse-panel">
       <div className="panel-heading"><span>{icon}</span><h2>{title}</h2><button aria-label={`Open ${title}`}><MoreHorizontal size={18} /></button></div>
-      {items.map((item) => <button className="browse-row" key={item.title} onClick={() => onBrowse(item.title)}><span className={`location-swatch ${item.color}`} /><span><strong>{item.title}</strong><small>{item.meta}</small></span><ChevronRight size={16} /></button>)}
+      {items.map((item) => <button className="browse-row" key={item.title} onClick={() => onBrowse(item.value ?? item.title)}><span className={`location-swatch ${item.color}`} /><span><strong>{item.title}</strong><small>{item.meta}</small></span><ChevronRight size={16} /></button>)}
     </section>
   );
 }
 
-function Inventory({ items, allCount, categories, category, setCategory, query, setQuery, view, setView, onSelect, onAdd }: {
+function Inventory({ items, allCount, categories, category, setCategory, query, setQuery, activeScope, clearScope, view, setView, onSelect, onAdd }: {
   items: InventoryItem[]; allCount: number; categories: string[]; category: string; setCategory: (category: string) => void;
-  query: string; setQuery: (query: string) => void; view: "grid" | "list"; setView: (view: "grid" | "list") => void;
+  query: string; setQuery: (query: string) => void; activeScope?: string; clearScope: () => void; view: "grid" | "list"; setView: (view: "grid" | "list") => void;
   onSelect: (item: InventoryItem) => void; onAdd: () => void;
 }) {
   return (
     <div className="page">
       <PageHeading eyebrow="Your things" title="Inventory" copy={`${allCount} objects, each with a place and a story.`} actions={<button className="primary-button" onClick={onAdd}><Plus size={18} /> Add item</button>} />
+      {activeScope && <div className="calm-callout"><Search size={18} /><div><strong>Showing {activeScope}</strong><p>{items.length} matching {items.length === 1 ? "item" : "items"}.</p></div><button type="button" className="text-button" onClick={clearScope}>Clear</button></div>}
       <div className="inventory-toolbar">
         <div className="local-search"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search inventory" />{query && <button onClick={() => setQuery("")}><X size={14} /></button>}</div>
         <button className="filter-button"><SlidersHorizontal size={16} /> Filter <span>1</span></button>
@@ -480,7 +488,7 @@ function CollectionsView({ collections, onBrowse }: { collections: CollectionSum
   return (
     <div className="page">
       <PageHeading eyebrow="Organized by purpose" title="Collections" copy="Bring related items together without changing where they live." actions={<button className="secondary-button"><Plus size={17} /> New collection</button>} />
-      <div className="collection-grid">{collections.map((collection) => <button className="collection-card" key={collection.name} onClick={() => onBrowse(collection.name)}><div className="collection-cover" style={{ background: collection.color }}><span>{collection.icon}</span><i /><i /></div><div><strong>{collection.name}</strong><small>{collection.count} items</small></div><ChevronRight size={17} /></button>)}</div>
+      <div className="collection-grid">{collections.map((collection) => <button className="collection-card" key={collection.name} onClick={() => onBrowse(collection.name)}><div className="collection-cover" style={{ background: collection.color }}><span>{collection.icon}</span><i /><i /></div><div><strong>{collection.name}</strong><small>{collectionItemLabel(collection.count)}</small></div><ChevronRight size={17} /></button>)}</div>
       <div className="calm-callout"><Sparkles size={19} /><div><strong>Collections are flexible</strong><p>An item can belong to several collections while keeping one permanent location.</p></div></div>
     </div>
   );
@@ -567,13 +575,15 @@ function InfoGroup({ title, children }: { title: string; children: React.ReactNo
   return <section className="info-group"><h3>{title}</h3>{children}</section>;
 }
 
-function ItemModal({ item, categories, locations, onClose, onSave }: { item?: InventoryItem; categories: string[]; locations: LocationSummary[]; onClose: () => void; onSave: (draft: ItemDraft) => void }) {
+function ItemModal({ item, categories, locations, collections, onCollectionsChanged, onClose, onSave }: { item?: InventoryItem; categories: string[]; locations: LocationSummary[]; collections: CollectionSummary[]; onCollectionsChanged: () => Promise<void>; onClose: () => void; onSave: (draft: ItemDraft) => void }) {
   const { control, register, handleSubmit, formState: { errors, isSubmitting }, trigger } = useForm<ItemFormValues>({ resolver: zodResolver(itemSchema), defaultValues: item ? itemToForm(item) : EMPTY_FORM });
   const itemName = useWatch({ control, name: "name" });
   const [photo, setPhoto] = useState<string | null>(item?.photo ?? null);
   const [photoUploading, setPhotoUploading] = useState(false);
   const [photoError, setPhotoError] = useState("");
   const [formSection, setFormSection] = useState<"essential" | "details">("essential");
+  const [collectionInput, setCollectionInput] = useState("");
+  const [selectedCollections, setSelectedCollections] = useState<string[]>(item?.collections ?? []);
 
   function submit(values: ItemFormValues) {
     if (photoUploading) return;
@@ -582,7 +592,7 @@ function ItemModal({ item, categories, locations, onClose, onSave }: { item?: In
       name: values.name,
       category: values.category.trim(),
       location: values.location.trim(),
-      collections: splitList(values.collectionsText),
+      collections: selectedCollections,
       tags: splitList(values.tagsText),
       notes: values.notes,
       purchaseDate: values.purchaseDate,
@@ -629,7 +639,7 @@ function ItemModal({ item, categories, locations, onClose, onSave }: { item?: In
                 <Field label="Category" error={errors.category?.message} hint="Choose a suggestion or type a new category"><input list="manuix-category-options" placeholder="Choose or type a category" {...register("category")} /><datalist id="manuix-category-options">{categories.map((entry) => <option value={entry} key={entry} />)}</datalist></Field>
                 <Field label="Condition"><select {...register("condition")}><option>New</option><option>Excellent</option><option>Good</option><option>Fair</option><option>Poor</option></select></Field>
                 <Field label="Permanent location" error={errors.location?.message} wide hint="Choose an existing full path or type a new one"><div className="input-icon"><MapPin size={16} /><input list="manuix-location-options" placeholder="Home / Room / Shelf" {...register("location")} /><datalist id="manuix-location-options">{locations.map((entry) => <option value={entry.path} key={entry.path}>{entry.path}</option>)}</datalist></div></Field>
-                <Field label="Collections" wide hint="Separate several with commas"><input placeholder="Photography, Travel" {...register("collectionsText")} /></Field>
+                <CollectionSelector collections={collections} selected={selectedCollections} input={collectionInput} setInput={setCollectionInput} setSelected={setSelectedCollections} onCollectionsChanged={onCollectionsChanged} />
                 <Field label="Tags" wide hint="Separate several with commas"><input placeholder="vintage, favorite" {...register("tagsText")} /></Field>
               </div>
             </>
@@ -656,6 +666,31 @@ function ItemModal({ item, categories, locations, onClose, onSave }: { item?: In
       </form>
     </div>
   );
+}
+
+function CollectionSelector({ collections, selected, input, setInput, setSelected, onCollectionsChanged }: { collections: CollectionSummary[]; selected: string[]; input: string; setInput: (value: string) => void; setSelected: React.Dispatch<React.SetStateAction<string[]>>; onCollectionsChanged: () => Promise<void> }) {
+  const matches = findCollectionMatches(collections, input);
+  const searchable = collections.filter((collection) => normalizeCollectionName(collection.name).includes(normalizeCollectionName(input))).slice(0, 6);
+  const suggestions = input ? (matches.exact ? [matches.exact, ...matches.similar] : [...matches.similar, ...searchable]) : collections.slice(0, 6);
+  const uniqueSuggestions = suggestions.filter((collection, index, all) => all.findIndex((entry) => entry.name === collection.name) === index);
+
+  async function createNewCollection() {
+    const name = input.trim();
+    if (!name) return;
+    if (matches.exact) {
+      setSelected((current) => current.includes(matches.exact!.name) ? current : [...current, matches.exact!.name]);
+      setInput("");
+      return;
+    }
+    const warning = matches.similar.length ? `Similar collections exist: ${matches.similar.map((collection) => collection.name).join(", ")}. Create “${name}” anyway?` : `Create new collection “${name}”?`;
+    if (!window.confirm(warning)) return;
+    await inventoryRepository.createCollection(name);
+    await onCollectionsChanged();
+    setSelected((current) => current.includes(name) ? current : [...current, name]);
+    setInput("");
+  }
+
+  return <div className="field wide collection-selector"><span>Collections</span><div className="chip-row">{selected.map((entry) => <button type="button" className="collection-chip" key={entry} onClick={() => setSelected((current) => current.filter((name) => name !== entry))}>{entry} <X size={12} /></button>)}</div><div className="input-icon"><Boxes size={16} /><input value={input} onChange={(event) => setInput(event.target.value)} placeholder="Search collections" /></div><div className="collection-suggestions">{uniqueSuggestions.map((collection) => <button type="button" key={collection.name} onClick={() => { setSelected((current) => current.includes(collection.name) ? current : [...current, collection.name]); setInput(""); }}><strong>{collection.name}</strong><small>{collectionItemLabel(collection.count)}</small></button>)}</div>{input && !matches.exact && <button type="button" className="secondary-button small" onClick={() => void createNewCollection()}>Create new collection</button>}{matches.exact && <small>Exact match found. Select “{matches.exact.name}” instead of creating a duplicate.</small>}{matches.similar.length > 0 && <small>Possible spelling variations: {matches.similar.map((collection) => collection.name).join(", ")}</small>}</div>;
 }
 
 function Field({ label, error, hint, wide, children }: { label: string; error?: string; hint?: string; wide?: boolean; children: React.ReactNode }) {

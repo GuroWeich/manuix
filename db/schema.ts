@@ -18,11 +18,15 @@ export const collections = sqliteTable(
   {
     id: text("id").primaryKey(),
     name: text("name").notNull(),
+    normalizedName: text("normalized_name"),
     icon: text("icon").notNull().default("◇"),
     color: text("color").notNull().default("#dbe8e2"),
     createdAt: text("created_at").notNull(),
   },
-  (table) => [uniqueIndex("collections_name_idx").on(table.name)],
+  (table) => [
+    uniqueIndex("collections_name_idx").on(table.name),
+    uniqueIndex("collections_normalized_name_idx").on(table.normalizedName),
+  ],
 );
 
 export const inventoryItems = sqliteTable(
