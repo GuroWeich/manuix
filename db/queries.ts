@@ -4,6 +4,7 @@ import { getDatabase } from "./index";
 import { rm } from "node:fs/promises";
 import type { InventoryItem } from "../app/src/types";
 import { normalizeCollectionName } from "../app/src/collections";
+import { countInventoryItems } from "../app/src/inventory";
 
 export function isActiveInventoryRow() {
   return sql`1 = 1`;
@@ -161,8 +162,7 @@ export async function removeItem(id: string) {
 
 export async function listCatalog() {
   const db = getDatabase();
-  const itemRows = await db.select({ id: inventoryItems.id, locationId: inventoryItems.locationId, locationPath: inventoryItems.locationPath }).from(inventoryItems).where(isActiveInventoryRow());
-  const collectionLinks = await db.select({ collectionId: itemCollections.collectionId, itemId: itemCollections.itemId }).from(itemCollections).innerJoin(inventoryItems, eq(itemCollections.itemId, inventoryItems.id)).where(isActiveInventoryRow());
+  const inventory = await listItems();
   const locationRows = await db.select().from(locations).orderBy(asc(locations.path));
   const collectionRows = await db.select().from(collections).orderBy(asc(collections.name));
   const inboxRows = await db.select().from(photos).where(and(isNull(photos.itemId), eq(photos.status, "inbox"))).orderBy(desc(photos.createdAt));
@@ -172,13 +172,13 @@ export async function listCatalog() {
       name: location.name,
       path: location.path,
       color: location.color,
-      count: itemRows.filter((item) => item.locationPath === location.path || item.locationPath.startsWith(`${location.path} / `)).length,
+      count: countInventoryItems(inventory, { locationPath: location.path }),
     })),
     collections: collectionRows.map((collection) => ({
       name: collection.name,
       icon: collection.icon,
       color: collection.color,
-      count: new Set(collectionLinks.filter((link) => link.collectionId === collection.id).map((link) => link.itemId)).size,
+      count: countInventoryItems(inventory, { collectionName: collection.name }),
     })),
     inbox: inboxRows.map((photo) => ({
       id: photo.id,
@@ -189,6 +189,7 @@ export async function listCatalog() {
     })),
   };
 }
+
 
 
 export async function createCollection(name: string) {
